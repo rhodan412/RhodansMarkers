@@ -265,7 +265,7 @@ RMFrame:SetScript("OnEvent", function(self, event, ...)
         RM.addonIsUpdatingMarkers = true
         RM.ClearAndApplyMarkers()
         C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)  -- Set flag to false after markers have been re-applied
-    elseif event == "PLAYER_REGEN_ENABLED" then  -- MIGHT NEED TO REMOVE THIS IF MARKS TURN INTO BAD BEHAVIOR, ELSE CAN SAVE HEALER AND TANK TO TABLE FOR REFRESHING WHEN COMBAT ENDS
+    elseif event == "ENCOUNTER_END" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
         -- Actions to take when exiting combat
         if IsIn5ManDungeon() then
             RM.addonIsUpdatingMarkers = true
