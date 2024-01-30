@@ -12,8 +12,6 @@ if RhodansMarkersEnabled == nil then
 end
 RM.isEnabled = RhodansMarkersEnabled
 
-
-
 local RMFrame = CreateFrame("Frame", "RhodansMarkersFrame", UIParent)
 
 
@@ -260,11 +258,13 @@ RMFrame:SetScript("OnEvent", function(self, event, ...)
             RM.ClearAndApplyMarkers()
             C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)  -- Set flag to false after markers have been re-applied
         end
+		
     elseif event == "GROUP_ROSTER_UPDATE" and IsIn5ManDungeon() then
         -- Delayed re-marking if the group roster updates while in a dungeon
         RM.addonIsUpdatingMarkers = true
         RM.ClearAndApplyMarkers()
         C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)  -- Set flag to false after markers have been re-applied
+		
     elseif event == "ENCOUNTER_END" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
         -- Actions to take when exiting combat
         if IsIn5ManDungeon() then
