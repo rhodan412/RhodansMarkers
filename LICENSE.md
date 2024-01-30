@@ -1,6 +1,6 @@
 All Rights Reserved
 
-Copyright (c) Rhodan's Markers by Aurleis
+Copyright (c) Rhodan's Markers by Rhodan {Aurleis}
 
 Created by Techcable
 
