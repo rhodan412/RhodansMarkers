@@ -1,6 +1,10 @@
 -- Core.lua
 
 
+-------------------------------------
+-- 1. Declarations
+-------------------------------------
+
 -- Initialize RM if it doesn't exist
 RM = RM or {}
 
@@ -15,16 +19,26 @@ RM.isEnabled = RhodansMarkersEnabled
 local RMFrame = CreateFrame("Frame", "RhodansMarkersFrame", UIParent)
 
 
+-------------------------------------
+-- 2. Utility Functions
+-------------------------------------
+
+-- Function to check if player is within a 5 player dungeon group
 local function IsIn5ManDungeon()
     local isInstance, instanceType = IsInInstance()
     return isInstance and instanceType == "party"
 end
 
 
+-- Function for applying the raid marker to specific players
 local function SetMarkerOnUnit(unit, marker)
     SetRaidTarget(unit, marker)
 end
 
+
+-------------------------------------
+-- 3. Core Functionality
+-------------------------------------
 
 -- Delayed marker check
 function RM.DelayedCheckAndMarkPlayer()
@@ -42,6 +56,7 @@ function RM.ClearAndApplyMarkers()
     end)
 end
 
+
 -- Clear markers
 function RM.ClearAllMarkers()
     if not IsIn5ManDungeon() then return end
@@ -50,6 +65,7 @@ function RM.ClearAllMarkers()
         SetRaidTarget(unit, 0)
     end
 end
+
 
 -- Helper function to get a player's specialization ID
 local function GetSpecializationID(unit)
@@ -158,7 +174,6 @@ function RM.CheckAndMarkPartyMembers()
 	RM.DelayedCheckAndMarkPlayer()
 end
 
-
 		
 -- Ensure this function is part of the RM table
 function RM.CheckAndMarkPlayer()
@@ -195,6 +210,9 @@ function RM.CheckAndMarkPlayer()
 end
 
 
+-------------------------------------
+-- 4. Slash Command Registration
+-------------------------------------
 
 -- At the beginning of your script
 RM.isEnabled = true  -- Addon is enabled by default
@@ -219,7 +237,9 @@ SlashCmdList["RM"] = function(msg)
 end
 
 
-
+-------------------------------------
+-- 5. Event Registration
+-------------------------------------
 
 -- Register event for group roster update
 RMFrame:RegisterEvent("ADDON_LOADED")
@@ -231,6 +251,10 @@ RMFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 RMFrame:RegisterEvent("RAID_TARGET_UPDATE")
 RMFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 
+
+-------------------------------------
+-- 6. Event Handlers and Throttling
+-------------------------------------
 
 -- Flag to indicate whether an update is from the addon
 RM.addonIsUpdatingMarkers = false
