@@ -30,6 +30,14 @@ local function IsIn5ManDungeon()
 end
 
 
+-- Enhanced check to determine if the player is no longer in a 5-man dungeon group
+local function ShouldClearMarkers()
+    local isInstance, instanceType = IsInInstance()
+    -- Checking if not in an instance or not in a 'party' instance type
+    return not isInstance or instanceType ~= "party"
+end
+
+
 -- Function for applying the raid marker to specific players
 local function SetMarkerOnUnit(unit, marker)
     SetRaidTarget(unit, marker)
@@ -64,6 +72,13 @@ function RM.ClearAllMarkers()
         local unit = (i == 0) and "player" or "party" .. i
         SetRaidTarget(unit, 0)
     end
+end
+
+
+-- Ensure this function is part of the RM table and properly called
+function RM.ClearPlayerMarkers()
+    -- Clear markers from the player
+    SetRaidTarget("player", 0)
 end
 
 
@@ -242,14 +257,10 @@ end
 -------------------------------------
 
 -- Register event for group roster update
-RMFrame:RegisterEvent("ADDON_LOADED")
-RMFrame:RegisterEvent("VARIABLES_LOADED")
 RMFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 RMFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-RMFrame:RegisterEvent("PLAYER_LOGIN")
-RMFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-RMFrame:RegisterEvent("RAID_TARGET_UPDATE")
-RMFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
+RMFrame:RegisterEvent("ENCOUNTER_END")
+RMFrame:RegisterEvent("PORTRAITS_UPDATED")
 
 
 -------------------------------------
@@ -274,22 +285,26 @@ end
 -- Event handling function
 RMFrame:SetScript("OnEvent", function(self, event, ...)
     if not RM.isEnabled then return end
-
-    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_ROLES_ASSIGNED" then
-        local inInstance, instanceType = IsInInstance()
-        if inInstance and instanceType == "party" then
-            RM.addonIsUpdatingMarkers = true
-            RM.ClearAndApplyMarkers()
-            C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)  -- Set flag to false after markers have been re-applied
-        end
+		
+    if event == "PLAYER_ENTERING_WORLD" then --or event == "ZONE_CHANGED_NEW_AREA" then
+        -- Debugging statement
+        print("Zone change detected, checking conditions...")
+        C_Timer.After(1, function()  -- Increased delay to ensure state accuracy
+            if ShouldClearMarkers() then
+                RM.ClearPlayerMarkers()
+            else
+                print("Still in a 5-man dungeon or conditions not met.")
+            end
+        end)
 		
     elseif event == "GROUP_ROSTER_UPDATE" and IsIn5ManDungeon() then
         -- Delayed re-marking if the group roster updates while in a dungeon
         RM.addonIsUpdatingMarkers = true
         RM.ClearAndApplyMarkers()
         C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)  -- Set flag to false after markers have been re-applied
-		
-    elseif event == "ENCOUNTER_END" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
+
+	-- Triggers when Boss fight is over (win/lose) or during a PORTRAITS_UPDATED event (such as clicking the books in Azure Vault
+    elseif event == "ENCOUNTER_END" or event == "PORTRAITS_UPDATED" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
         -- Actions to take when exiting combat
         if IsIn5ManDungeon() then
             RM.addonIsUpdatingMarkers = true
