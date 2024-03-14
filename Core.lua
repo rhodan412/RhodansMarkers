@@ -259,8 +259,10 @@ end
 -- Register event for group roster update
 RMFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 RMFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+RMFrame:RegisterEvent("ENCOUNTER_START")
 RMFrame:RegisterEvent("ENCOUNTER_END")
-RMFrame:RegisterEvent("PORTRAITS_UPDATED")
+RMFrame:RegisterEvent("UNIT_PORTRAIT_UPDATE")
+RMFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 
 -------------------------------------
@@ -287,13 +289,9 @@ RMFrame:SetScript("OnEvent", function(self, event, ...)
     if not RM.isEnabled then return end
 		
     if event == "PLAYER_ENTERING_WORLD" then --or event == "ZONE_CHANGED_NEW_AREA" then
-        -- Debugging statement
-        print("Zone change detected, checking conditions...")
         C_Timer.After(1, function()  -- Increased delay to ensure state accuracy
             if ShouldClearMarkers() then
                 RM.ClearPlayerMarkers()
-            else
-                print("Still in a 5-man dungeon or conditions not met.")
             end
         end)
 		
@@ -304,11 +302,30 @@ RMFrame:SetScript("OnEvent", function(self, event, ...)
         C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)  -- Set flag to false after markers have been re-applied
 
 	-- Triggers when Boss fight is over (win/lose) or during a PORTRAITS_UPDATED event (such as clicking the books in Azure Vault
-    elseif event == "ENCOUNTER_END" or event == "PORTRAITS_UPDATED" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
+    elseif event == "ENCOUNTER_END" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
+	--elseif event == "ENCOUNTER_END" then 
         -- Actions to take when exiting combat
         if IsIn5ManDungeon() then
             RM.addonIsUpdatingMarkers = true
             RM.ClearAndApplyMarkers()
+            C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)
+        end
+
+	-- Triggers when Boss fight is over (win/lose) or during a PORTRAITS_UPDATED event (such as clicking the books in Azure Vault
+    elseif event == "UNIT_PORTRAIT_UPDATE" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
+        -- Actions to take when exiting combat
+        if IsIn5ManDungeon() then
+            RM.addonIsUpdatingMarkers = true
+            RM.CheckAndMarkPartyMembers()
+            C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)
+        end
+		
+	-- Triggers when Boss fight is over (win/lose) or during a PORTRAITS_UPDATED event (such as clicking the books in Azure Vault
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        -- Actions to take when exiting combat
+        if IsIn5ManDungeon() then
+            RM.addonIsUpdatingMarkers = true
+            RM.CheckAndMarkPartyMembers()
             C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)
         end
     end
