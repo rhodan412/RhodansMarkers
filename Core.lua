@@ -104,7 +104,7 @@ end
 function RM.CheckAndMarkPartyMembersByRole()
     -- Check if the addon is enabled
     if not RM.isEnabled then return end
-	
+
     if not IsIn5ManDungeon() or UnitAffectingCombat("player") then return end
 
     local healerMarked = false
@@ -129,33 +129,6 @@ end
 
 function RM.DelayedCheckAndMarkPartyMembers()
     C_Timer.After(2, RM.CheckAndMarkPartyMembers)  -- Delay for 2 seconds
-end
-
-
--- Ensure this function is part of the RM table
-function RM.CheckAndMarkPartyMembersByRole()
-    -- Check if the addon is enabled
-    if not RM.isEnabled then return end
-	
-    if not IsIn5ManDungeon() or UnitAffectingCombat("player") then return end
-
-    local healerMarked = false
-    local tankMarked = false
-
-    -- Iterate over party members only, excluding the player
-    for i = 1, GetNumGroupMembers() - 1 do
-        local unit = "party" .. i
-        local role = UnitGroupRolesAssigned(unit)
-        local currentMarker = GetRaidTargetIndex(unit)
-
-        if role == "HEALER" and not healerMarked and not currentMarker then
-            SetMarkerOnUnit(unit, 5)  -- Moon marker
-            healerMarked = true
-        elseif role == "TANK" and not tankMarked and not currentMarker then
-            SetMarkerOnUnit(unit, 1)  -- Star marker
-            tankMarked = true
-        end
-    end
 end
 
 
@@ -189,12 +162,12 @@ function RM.CheckAndMarkPartyMembers()
 	RM.DelayedCheckAndMarkPlayer()
 end
 
-		
+
 -- Ensure this function is part of the RM table
 function RM.CheckAndMarkPlayer()
     -- Ensure we are in a dungeon, the addon is enabled, and we are not currently updating markers
     if not IsIn5ManDungeon() or not RM.isEnabled or RM.isUpdatingMarkers then return end
-	
+
     -- Throttle updates to prevent loops
     if RM.lastUpdate and (GetTime() - RM.lastUpdate) < 1 then return end
     RM.lastUpdate = GetTime()
@@ -219,7 +192,7 @@ function RM.CheckAndMarkPlayer()
 	if not healerMarked or not tankMarked then
 		RM.CheckAndMarkPartyMembersByRole()
 	end
-	
+
     -- Reset the flag after a delay
     C_Timer.After(1, function() RM.isUpdatingMarkers = false end)
 end
@@ -287,14 +260,14 @@ end
 -- Event handling function
 RMFrame:SetScript("OnEvent", function(self, event, ...)
     if not RM.isEnabled then return end
-		
+
     if event == "PLAYER_ENTERING_WORLD" then --or event == "ZONE_CHANGED_NEW_AREA" then
         C_Timer.After(1, function()  -- Increased delay to ensure state accuracy
             if ShouldClearMarkers() then
                 RM.ClearPlayerMarkers()
             end
         end)
-		
+
     elseif event == "GROUP_ROSTER_UPDATE" and IsIn5ManDungeon() then
         -- Delayed re-marking if the group roster updates while in a dungeon
         RM.addonIsUpdatingMarkers = true
@@ -319,7 +292,7 @@ RMFrame:SetScript("OnEvent", function(self, event, ...)
             RM.CheckAndMarkPartyMembers()
             C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)
         end
-		
+
 	-- Triggers when Boss fight is over (win/lose) or during a PORTRAITS_UPDATED event (such as clicking the books in Azure Vault
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Actions to take when exiting combat
