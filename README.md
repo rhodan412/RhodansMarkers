@@ -12,4 +12,4 @@ Chat commands
 Links
 -----
 
-* The latest release is available on [CurseForge]([https://www.curseforge.com/wow/addons/action-bar-profiles-fan-update](https://www.curseforge.com/wow/addons/rhodans-markers)
+* The latest release is available on [CurseForge]([https://www.curseforge.com/wow/addons/rhodans-markers](https://www.curseforge.com/wow/addons/rhodans-markers)
