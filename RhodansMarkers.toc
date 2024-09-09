@@ -5,6 +5,6 @@
 ## Version: 11.0.2.1
 ## IconTexture: Interface\AddOns\RhodansMarkers\RM.tga
 
-## SavedVariables: RhodansMarkersEnabled
+## SavedVariables: RhodansMarkersSettings
 
 Core.lua
