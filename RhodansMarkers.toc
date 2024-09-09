@@ -2,7 +2,7 @@
 ## Title: Rhodan's Markers
 ## Notes: Automatically marks players in 5-man dungeons based on their role.
 ## Author: Rhodan {Aurleis}
-## Version: 11.0.2.1
+## Version: 2.0.0
 ## IconTexture: Interface\AddOns\RhodansMarkers\RM.tga
 
 ## SavedVariables: RhodansMarkersSettings
