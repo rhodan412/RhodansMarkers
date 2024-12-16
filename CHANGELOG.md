@@ -1,3 +1,6 @@
+# 11.0.7.1
+- Version update
+
 # 11.0.2.2
 - New addon options allowing users to customize role markers
 
