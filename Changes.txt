@@ -1,10 +1,12 @@
-11.0.7.2
+11.1.0.1 (2025-03-01)
 
 	Core.lua
 		- Fixed spacing
 		
 	RhodansMarkers.toc
-		- Updated version#
+		- Updated version# (2025.03.01)
+		- Updated interface# (2025.03.01)
+		- Added category information for addon (2025.03.01)
 
 
 11.0.7.1
