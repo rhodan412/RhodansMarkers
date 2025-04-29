@@ -1,3 +1,12 @@
+11.1.5.1
+
+	Core.lua
+		- Added functionality to not override current selected tank/healer marks if markers exist unless player is party leader and the current marks don't correspond with current settings. This should remove a lot of the 'spamming' of player markers, especially if multiple players in the dungeon group are using addon (2025.04.28)
+
+	RhodansMarkers.toc
+		- Updated version/interface# (2025.04.28)
+
+
 11.1.0.1 (2025-03-01)
 
 	Core.lua
