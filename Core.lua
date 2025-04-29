@@ -146,39 +146,77 @@ end
 function RM.CheckAndMarkPartyMembers()
 	if not IsIn5ManDungeon() or not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) or RM.isUpdatingMarkers then return end
 
-	-- Define healer and tank spec IDs
-	local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468} -- Add all healer spec IDs here
-	local tankSpecIDs = {250, 104, 581, 66, 268, 73} -- Add all tank spec IDs here
+	local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468}
+	local tankSpecIDs = {250, 104, 581, 66, 268, 73}
 
-	-- Flags to check if healer or tank has been marked
 	RMS.healerMarked = false
 	RMS.tankMarked = false
 
-	-- Iterate over party members only, excluding the player
+	local isLeader = UnitIsGroupLeader("player")
+
 	for i = 1, GetNumGroupMembers() - 1 do
 		local unit = "party" .. i
 		local specID = GetSpecializationID(unit)
 		local currentMarker = GetRaidTargetIndex(unit)
 
-		-- Check and update the party member's marker based on their specialization
-		if specID and tContains(healerSpecIDs, specID) and not RMS.healerMarked and currentMarker ~= 5 then
-			SetMarkerOnUnit(unit, RMS.healerMarker) -- Healer marker
-			RMS.healerMarked = true
-		elseif specID and tContains(tankSpecIDs, specID) and not RMS.tankMarked and currentMarker ~= 1 then
-			SetMarkerOnUnit(unit, RMS.tankMarker) -- Tank marker
-			RMS.tankMarked = true
+		if specID then
+			if tContains(healerSpecIDs, specID) and RMS.healerEnabled and not RMS.healerMarked then
+				if not currentMarker then
+					SetMarkerOnUnit(unit, RMS.healerMarker)
+					RMS.healerMarked = true
+				elseif currentMarker ~= RMS.healerMarker and isLeader then
+					SetMarkerOnUnit(unit, RMS.healerMarker)
+					RMS.healerMarked = true
+				end
+			elseif tContains(tankSpecIDs, specID) and RMS.tankEnabled and not RMS.tankMarked then
+				if not currentMarker then
+					SetMarkerOnUnit(unit, RMS.tankMarker)
+					RMS.tankMarked = true
+				elseif currentMarker ~= RMS.tankMarker and isLeader then
+					SetMarkerOnUnit(unit, RMS.tankMarker)
+					RMS.tankMarked = true
+				end
+			end
 		end
 	end
+
 	RM.DelayedCheckAndMarkPlayer()
 end
+
+-- function RM.CheckAndMarkPartyMembers()
+	-- if not IsIn5ManDungeon() or not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) or RM.isUpdatingMarkers then return end
+
+	-- -- Define healer and tank spec IDs
+	-- local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468} -- Add all healer spec IDs here
+	-- local tankSpecIDs = {250, 104, 581, 66, 268, 73} -- Add all tank spec IDs here
+
+	-- -- Flags to check if healer or tank has been marked
+	-- RMS.healerMarked = false
+	-- RMS.tankMarked = false
+
+	-- -- Iterate over party members only, excluding the player
+	-- for i = 1, GetNumGroupMembers() - 1 do
+		-- local unit = "party" .. i
+		-- local specID = GetSpecializationID(unit)
+		-- local currentMarker = GetRaidTargetIndex(unit)
+
+		-- -- Check and update the party member's marker based on their specialization
+		-- if specID and tContains(healerSpecIDs, specID) and not RMS.healerMarked and currentMarker ~= 5 then
+			-- SetMarkerOnUnit(unit, RMS.healerMarker) -- Healer marker
+			-- RMS.healerMarked = true
+		-- elseif specID and tContains(tankSpecIDs, specID) and not RMS.tankMarked and currentMarker ~= 1 then
+			-- SetMarkerOnUnit(unit, RMS.tankMarker) -- Tank marker
+			-- RMS.tankMarked = true
+		-- end
+	-- end
+	-- RM.DelayedCheckAndMarkPlayer()
+-- end
 
 
 -- Ensure this function is part of the RM table
 function RM.CheckAndMarkPlayer()
-	-- Ensure we are in a dungeon, the addon is enabled, and we are not currently updating markers
 	if not IsIn5ManDungeon() or not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) or RM.isUpdatingMarkers then return end
 
-	-- Throttle updates to prevent loops
 	if RM.lastUpdate and (GetTime() - RM.lastUpdate) < 1 then return end
 	RM.lastUpdate = GetTime()
 
@@ -186,26 +224,68 @@ function RM.CheckAndMarkPlayer()
 	local playerSpecID = GetSpecializationID("player")
 	local playerMarker = GetRaidTargetIndex("player")
 
-	-- Define healer and tank spec IDs
-	local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468} -- Add all healer spec IDs here
-	local tankSpecIDs = {250, 104, 581, 66, 268, 73} -- Add all tank spec IDs here
+	local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468}
+	local tankSpecIDs = {250, 104, 581, 66, 268, 73}
 
-	-- Check and update the player's marker based on their specialization
-	if playerSpecID and tContains(healerSpecIDs, playerSpecID) and RMS.healerEnabled and playerMarker ~= 5 then
-		SetMarkerOnUnit("player", RMS.healerMarker) -- Healer marker
-	elseif playerSpecID and tContains(tankSpecIDs, playerSpecID) and RMS.tankEnabled and playerMarker ~= 1 then
-		SetMarkerOnUnit("player", RMS.tankMarker) -- Tank marker
-	elseif playerMarker and not (tContains(healerSpecIDs, playerSpecID) or tContains(tankSpecIDs, playerSpecID)) then
-		SetRaidTarget("player", 0) -- Clear the marker if it's not matching the spec anymore
+	local isLeader = UnitIsGroupLeader("player")
+
+	if playerSpecID then
+		if tContains(healerSpecIDs, playerSpecID) and RMS.healerEnabled then
+			if not playerMarker then
+				SetMarkerOnUnit("player", RMS.healerMarker)
+			elseif playerMarker ~= RMS.healerMarker and isLeader then
+				SetMarkerOnUnit("player", RMS.healerMarker)
+			end
+		elseif tContains(tankSpecIDs, playerSpecID) and RMS.tankEnabled then
+			if not playerMarker then
+				SetMarkerOnUnit("player", RMS.tankMarker)
+			elseif playerMarker ~= RMS.tankMarker and isLeader then
+				SetMarkerOnUnit("player", RMS.tankMarker)
+			end
+		elseif playerMarker and not (tContains(healerSpecIDs, playerSpecID) or tContains(tankSpecIDs, playerSpecID)) then
+			SetRaidTarget("player", 0)
+		end
 	end
 
 	if not RMS.healerMarked or not RMS.tankMarked then
 		RM.CheckAndMarkPartyMembersByRole()
 	end
 
-	-- Reset the flag after a delay
 	C_Timer.After(1, function() RM.isUpdatingMarkers = false end)
 end
+
+-- function RM.CheckAndMarkPlayer()
+	-- -- Ensure we are in a dungeon, the addon is enabled, and we are not currently updating markers
+	-- if not IsIn5ManDungeon() or not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) or RM.isUpdatingMarkers then return end
+
+	-- -- Throttle updates to prevent loops
+	-- if RM.lastUpdate and (GetTime() - RM.lastUpdate) < 1 then return end
+	-- RM.lastUpdate = GetTime()
+
+	-- RM.isUpdatingMarkers = true
+	-- local playerSpecID = GetSpecializationID("player")
+	-- local playerMarker = GetRaidTargetIndex("player")
+
+	-- -- Define healer and tank spec IDs
+	-- local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468} -- Add all healer spec IDs here
+	-- local tankSpecIDs = {250, 104, 581, 66, 268, 73} -- Add all tank spec IDs here
+
+	-- -- Check and update the player's marker based on their specialization
+	-- if playerSpecID and tContains(healerSpecIDs, playerSpecID) and RMS.healerEnabled and playerMarker ~= 5 then
+		-- SetMarkerOnUnit("player", RMS.healerMarker) -- Healer marker
+	-- elseif playerSpecID and tContains(tankSpecIDs, playerSpecID) and RMS.tankEnabled and playerMarker ~= 1 then
+		-- SetMarkerOnUnit("player", RMS.tankMarker) -- Tank marker
+	-- elseif playerMarker and not (tContains(healerSpecIDs, playerSpecID) or tContains(tankSpecIDs, playerSpecID)) then
+		-- SetRaidTarget("player", 0) -- Clear the marker if it's not matching the spec anymore
+	-- end
+
+	-- if not RMS.healerMarked or not RMS.tankMarked then
+		-- RM.CheckAndMarkPartyMembersByRole()
+	-- end
+
+	-- -- Reset the flag after a delay
+	-- C_Timer.After(1, function() RM.isUpdatingMarkers = false end)
+-- end
 
 
 -------------------------------------
