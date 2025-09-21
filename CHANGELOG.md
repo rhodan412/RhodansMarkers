@@ -1,3 +1,9 @@
+11.2.0.0 (2025-09-20)
+
+	RhodansMarkers.toc
+		- Updated version/interface# (2025.09.20)
+
+
 11.1.5.1
 
 	Core.lua
