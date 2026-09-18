@@ -1,570 +1,341 @@
--- Core.lua
-
-
--------------------------------------
--- 1. Declarations
--------------------------------------
-
--- Initialize RM and RMS
+-- Rhodan's Markers: target-driven tank and healer marking in five-player dungeons.
 RM = RM or {}
 RMS = RMS or {}
 
--- Keep a reference to the settings category
-RM.optionsID = nil
+local ADDON_NAME = "RhodansMarkers"
+local healerSpecs = { [65] = true, [105] = true, [256] = true, [257] = true, [264] = true, [270] = true, [1468] = true }
+local tankSpecs = { [66] = true, [73] = true, [104] = true, [250] = true, [268] = true, [581] = true }
+local version = GetBuildInfo()
+local major, minor = tostring(version):match("^(%d+)%.(%d+)")
+major, minor = tonumber(major) or 0, tonumber(minor) or 0
+-- Forever reports 1.60 but uses the newer protected raid-target action.
+local secureMarking = major >= 12 or (major == 1 and minor >= 60)
+local frame = CreateFrame("Frame")
+local button
+local bindingOwner = CreateFrame("Frame")
+local lastInspectGUID, lastInspectTime
 
--- Initialize settings
 function RM:InitializeSettings()
-	if RhodansMarkersSettings == nil then
-		RhodansMarkersSettings = {
-			enabled = true,
-			tankEnabled = true,
-			healerEnabled = true,
-			tankMarker = 1,  -- Default marker is Star
-			healerMarker = 5 -- Default marker is Moon
-		}
-	end
-	RMS = RhodansMarkersSettings
+    RhodansMarkersSettings = RhodansMarkersSettings or {}
+    RMS = RhodansMarkersSettings
+    if RMS.enabled == nil then RMS.enabled = true end
+    if RMS.tankEnabled == nil then RMS.tankEnabled = true end
+    if RMS.healerEnabled == nil then RMS.healerEnabled = true end
+    RMS.tankMarker = tonumber(RMS.tankMarker) or 1
+    RMS.healerMarker = tonumber(RMS.healerMarker) or 5
+    if type(RMS.keybind) ~= "string" or RMS.keybind == "" then RMS.keybind = nil end
 end
 
-local RMFrame = CreateFrame("Frame", "RhodansMarkersFrame", UIParent)
-
-
--------------------------------------
--- 2. Utility Functions
--------------------------------------
-
--- Function to check if player is within a 5 player dungeon group
-local function IsIn5ManDungeon()
-	local isInstance, instanceType = IsInInstance()
-	return isInstance and instanceType == "party"
+local function InFivePlayerDungeon()
+    local inside, kind = IsInInstance()
+    local members = GetNumGroupMembers() or 0
+    return inside and kind == "party" and not IsInRaid() and members >= 2 and members <= 5
 end
 
-
--- Enhanced check to determine if the player is no longer in a 5-man dungeon group
-local function ShouldClearMarkers()
-	local isInstance, instanceType = IsInInstance()
-	-- Checking if not in an instance or not in a 'party' instance type
-	return not isInstance or instanceType ~= "party"
+local function TargetSpec(unit)
+    if not UnitIsPlayer(unit) then return nil end
+    local specAPI = C_SpecializationInfo
+    if unit == "player" then
+        local index = specAPI and specAPI.GetSpecialization and specAPI.GetSpecialization()
+            or (GetSpecialization and GetSpecialization())
+        if not index then return nil end
+        if specAPI and specAPI.GetSpecializationInfo then
+            return specAPI.GetSpecializationInfo(index)
+        end
+        return GetSpecializationInfo and GetSpecializationInfo(index)
+    end
+    local spec = specAPI and specAPI.GetInspectSpecialization and specAPI.GetInspectSpecialization(unit)
+        or (GetInspectSpecialization and GetInspectSpecialization(unit))
+    if issecretvalue and issecretvalue(spec) then return nil end
+    if spec and spec > 0 then return spec end
+    -- Classic and Retail may need an inspect response before the spec is known.
+    if NotifyInspect and CanInspect and CanInspect(unit) then
+        local guid = UnitGUID(unit)
+        if guid and (not issecretvalue or not issecretvalue(guid))
+            and (guid ~= lastInspectGUID or GetTime() - (lastInspectTime or 0) > 5) then
+            lastInspectGUID, lastInspectTime = guid, GetTime()
+            NotifyInspect(unit)
+        end
+    end
 end
 
-
--- Function for applying the raid marker to specific players
-local function SetMarkerOnUnit(unit, marker)
-	SetRaidTarget(unit, marker)
+local function TargetPartyUnit()
+    if UnitIsUnit("target", "player") then return "player" end
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if UnitExists(unit) and UnitIsUnit("target", unit) then return unit end
+    end
 end
 
+local function TargetMarker()
+    if not RMS.enabled or not InFivePlayerDungeon() or InCombatLockdown() then return nil end
+    if not UnitExists("target") then return nil end
+    local unit = TargetPartyUnit()
+    if not unit then return nil end
 
--------------------------------------
--- 3. Core Functionality
--------------------------------------
-
--- Delayed marker check
-function RM.DelayedCheckAndMarkPlayer()
-	C_Timer.After(2, RM.CheckAndMarkPlayer)  -- Delay for 2 seconds
+    -- Assigned party role wins; specialization is only a fallback for players.
+    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit)
+    if issecretvalue and issecretvalue(role) then return nil end
+    if role == "TANK" then return RMS.tankEnabled and RMS.tankMarker or nil, "Tank" end
+    if role == "HEALER" then return RMS.healerEnabled and RMS.healerMarker or nil, "Healer" end
+    -- A player's assigned dungeon role can lag behind a spec change; use the
+    -- player's current spec as a fallback while retaining the DPS veto for others.
+    if role == "DAMAGER" and unit ~= "player" then return nil end
+    local spec = TargetSpec(unit)
+    if issecretvalue and issecretvalue(spec) then return nil end
+    if tankSpecs[spec] then return RMS.tankEnabled and RMS.tankMarker or nil, "Tank" end
+    if healerSpecs[spec] then return RMS.healerEnabled and RMS.healerMarker or nil, "Healer" end
 end
 
+local function CreateMarkButton()
+    -- Retail and Forever require a genuinely secure action for raid-target marking.
+    button = CreateFrame("Button", "RhodansMarkersMarkButton", UIParent,
+        secureMarking and "SecureActionButtonTemplate,SecureHandlerStateTemplate" or nil)
+    button:SetSize(110, 30)
+    if TargetFrame then
+        button:SetPoint("LEFT", TargetFrame, "RIGHT", 12, 0)
+    else
+        button:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    end
+    button:SetFrameStrata("DIALOG")
+    -- Override click bindings need both phases so the secure button receives key release.
+    button:RegisterForClicks("AnyDown", "AnyUp")
 
--- This function is now responsible for both clearing and then re-applying the markers
-function RM.ClearAndApplyMarkers()
-	RM.ClearAllMarkers()
-	-- Apply markers after a delay to ensure they are not immediately cleared by the system
-	C_Timer.After(5, function()  -- Increase the delay to 5 seconds to allow for role changes to process
-		--RM.CheckAndMarkPlayer()
-		RM.CheckAndMarkPartyMembers()
-	end)
+    local background = button:CreateTexture(nil, "BACKGROUND")
+    background:SetAllPoints()
+    background:SetColorTexture(0.04, 0.06, 0.09, 0.94)
+    local highlight = button:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetColorTexture(0.30, 0.42, 0.56, 0.45)
+    local label = button:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    label:SetPoint("CENTER")
+    label:SetText("Mark")
+    button.label = label
+
+    if secureMarking then
+        -- Force the up-click path even when the ActionButtonUseKeyDown CVar is enabled.
+        button:SetAttribute("useOnKeyDown", false)
+        button:SetAttribute("unit", "target")
+        button:SetAttribute("action", "set")
+        button:SetAttribute("_onstate-combat", [[
+            if newstate == "combat" then
+                self:SetAttribute("type", nil)
+                self:Hide()
+            end
+        ]])
+        RegisterStateDriver(button, "combat", "[combat] combat; nocombat")
+    else
+        button:SetScript("OnClick", function()
+            local marker = TargetMarker()
+            if marker then SetRaidTarget("target", marker) end
+        end)
+    end
+    button:Hide()
 end
 
-
--- Clear markers
-function RM.ClearAllMarkers()
-	if not IsIn5ManDungeon() then return end
-	for i = 0, GetNumGroupMembers() do
-		local unit = (i == 0) and "player" or "party" .. i
-		SetRaidTarget(unit, 0)
-	end
+function RM.UpdateButton()
+    if not button then return end
+    -- The secure state driver disables and hides the protected button in combat.
+    if InCombatLockdown() then
+        if not secureMarking then button:Hide() end
+        return
+    end
+    ClearOverrideBindings(bindingOwner)
+    local marker, role = TargetMarker()
+    if not marker or marker < 1 or marker > 8 then
+        if secureMarking then button:SetAttribute("type", nil) end
+        button:Hide()
+        return
+    end
+    if secureMarking then
+        button:SetAttribute("type", "raidtarget")
+        button:SetAttribute("marker", marker)
+    end
+    button.label:SetText(role .. " |TInterface\\TargetingFrame\\UI-RaidTargetingIcon_" .. marker .. ":16:16|t")
+    button:Show()
+    if RMS.keybind then
+        SetOverrideBindingClick(bindingOwner, true, RMS.keybind, button:GetName(), "LeftButton")
+    end
 end
 
-
--- Ensure this function is part of the RM table and properly called
-function RM.ClearPlayerMarkers()
-	-- Clear markers from the player
-	SetRaidTarget("player", 0)
+-- Follower parties can briefly have an incomplete roster while roles are reassigned.
+-- Refresh after the role event and again when that reorganization has settled.
+local roleRefreshToken = 0
+local function ScheduleRoleRefresh()
+    roleRefreshToken = roleRefreshToken + 1
+    local token = roleRefreshToken
+    C_Timer.After(0.5, function()
+        if token == roleRefreshToken then RM.UpdateButton() end
+    end)
+    C_Timer.After(3, function()
+        if token == roleRefreshToken then RM.UpdateButton() end
+    end)
 end
 
-
--- Helper function to get a player's specialization ID
-local function GetSpecializationID(unit)
-	-- For the player, we can use the direct function
-	if unit == "player" then
-		return GetSpecializationInfo(GetSpecialization())
-	else
-		local specID = nil
-		-- For party members, we need to fetch the specialization from the server
-		-- If this returns nil, you may need to wait for the server to send the information
-		if UnitIsPlayer(unit) then
-			specID = GetInspectSpecialization(unit)
-		end
-		-- Convert specID to a number if it's not nil
-		return specID and tonumber(specID) or nil
-	end
-end
-
-
--- Ensure this function is part of the RM table
-function RM.CheckAndMarkPartyMembersByRole()
-	-- Check if the addon is enabled
-	if not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) then return end
-
-	if not IsIn5ManDungeon() or UnitAffectingCombat("player") then return end
-
-	RMS.healerMarked = false
-	RMS.tankMarked = false
-
-	-- Iterate over party members only, excluding the player
-	for i = 1, GetNumGroupMembers() - 1 do
-		local unit = "party" .. i
-		local role = UnitGroupRolesAssigned(unit)
-		local currentMarker = GetRaidTargetIndex(unit)
-
-		if role == "HEALER" and RMS.healerEnabled and not RMS.healerMarked and not currentMarker then
-			SetMarkerOnUnit(unit, RMS.healerMarker)  -- Healer marker
-			RMS.healerMarked = true
-		elseif role == "TANK" and RMS.tankEnabled and not RMS.tankMarked and not currentMarker then
-			SetMarkerOnUnit(unit, RMS.tankMarker)  -- Tank marker
-			RMS.tankMarked = true
-		end
-	end
-	C_Timer.After(3, RM.CheckAndMarkPlayer)
-end
-
-function RM.DelayedCheckAndMarkPartyMembers()
-	C_Timer.After(2, RM.CheckAndMarkPartyMembers)  -- Delay for 2 seconds
-end
-
-
--- Ensure this function is part of the RM table
-function RM.CheckAndMarkPartyMembers()
-	if not IsIn5ManDungeon() or not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) or RM.isUpdatingMarkers then return end
-
-	local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468}
-	local tankSpecIDs = {250, 104, 581, 66, 268, 73}
-
-	RMS.healerMarked = false
-	RMS.tankMarked = false
-
-	local isLeader = UnitIsGroupLeader("player")
-
-	for i = 1, GetNumGroupMembers() - 1 do
-		local unit = "party" .. i
-		local specID = GetSpecializationID(unit)
-		local currentMarker = GetRaidTargetIndex(unit)
-
-		if specID then
-			if tContains(healerSpecIDs, specID) and RMS.healerEnabled and not RMS.healerMarked then
-				if not currentMarker then
-					SetMarkerOnUnit(unit, RMS.healerMarker)
-					RMS.healerMarked = true
-				elseif currentMarker ~= RMS.healerMarker and isLeader then
-					SetMarkerOnUnit(unit, RMS.healerMarker)
-					RMS.healerMarked = true
-				end
-			elseif tContains(tankSpecIDs, specID) and RMS.tankEnabled and not RMS.tankMarked then
-				if not currentMarker then
-					SetMarkerOnUnit(unit, RMS.tankMarker)
-					RMS.tankMarked = true
-				elseif currentMarker ~= RMS.tankMarker and isLeader then
-					SetMarkerOnUnit(unit, RMS.tankMarker)
-					RMS.tankMarked = true
-				end
-			end
-		end
-	end
-
-	RM.DelayedCheckAndMarkPlayer()
-end
-
--- function RM.CheckAndMarkPartyMembers()
-	-- if not IsIn5ManDungeon() or not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) or RM.isUpdatingMarkers then return end
-
-	-- -- Define healer and tank spec IDs
-	-- local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468} -- Add all healer spec IDs here
-	-- local tankSpecIDs = {250, 104, 581, 66, 268, 73} -- Add all tank spec IDs here
-
-	-- -- Flags to check if healer or tank has been marked
-	-- RMS.healerMarked = false
-	-- RMS.tankMarked = false
-
-	-- -- Iterate over party members only, excluding the player
-	-- for i = 1, GetNumGroupMembers() - 1 do
-		-- local unit = "party" .. i
-		-- local specID = GetSpecializationID(unit)
-		-- local currentMarker = GetRaidTargetIndex(unit)
-
-		-- -- Check and update the party member's marker based on their specialization
-		-- if specID and tContains(healerSpecIDs, specID) and not RMS.healerMarked and currentMarker ~= 5 then
-			-- SetMarkerOnUnit(unit, RMS.healerMarker) -- Healer marker
-			-- RMS.healerMarked = true
-		-- elseif specID and tContains(tankSpecIDs, specID) and not RMS.tankMarked and currentMarker ~= 1 then
-			-- SetMarkerOnUnit(unit, RMS.tankMarker) -- Tank marker
-			-- RMS.tankMarked = true
-		-- end
-	-- end
-	-- RM.DelayedCheckAndMarkPlayer()
--- end
-
-
--- Ensure this function is part of the RM table
-function RM.CheckAndMarkPlayer()
-	if not IsIn5ManDungeon() or not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) or RM.isUpdatingMarkers then return end
-
-	if RM.lastUpdate and (GetTime() - RM.lastUpdate) < 1 then return end
-	RM.lastUpdate = GetTime()
-
-	RM.isUpdatingMarkers = true
-	local playerSpecID = GetSpecializationID("player")
-	local playerMarker = GetRaidTargetIndex("player")
-
-	local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468}
-	local tankSpecIDs = {250, 104, 581, 66, 268, 73}
-
-	local isLeader = UnitIsGroupLeader("player")
-
-	if playerSpecID then
-		if tContains(healerSpecIDs, playerSpecID) and RMS.healerEnabled then
-			if not playerMarker then
-				SetMarkerOnUnit("player", RMS.healerMarker)
-			elseif playerMarker ~= RMS.healerMarker and isLeader then
-				SetMarkerOnUnit("player", RMS.healerMarker)
-			end
-		elseif tContains(tankSpecIDs, playerSpecID) and RMS.tankEnabled then
-			if not playerMarker then
-				SetMarkerOnUnit("player", RMS.tankMarker)
-			elseif playerMarker ~= RMS.tankMarker and isLeader then
-				SetMarkerOnUnit("player", RMS.tankMarker)
-			end
-		elseif playerMarker and not (tContains(healerSpecIDs, playerSpecID) or tContains(tankSpecIDs, playerSpecID)) then
-			SetRaidTarget("player", 0)
-		end
-	end
-
-	if not RMS.healerMarked or not RMS.tankMarked then
-		RM.CheckAndMarkPartyMembersByRole()
-	end
-
-	C_Timer.After(1, function() RM.isUpdatingMarkers = false end)
-end
-
--- function RM.CheckAndMarkPlayer()
-	-- -- Ensure we are in a dungeon, the addon is enabled, and we are not currently updating markers
-	-- if not IsIn5ManDungeon() or not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) or RM.isUpdatingMarkers then return end
-
-	-- -- Throttle updates to prevent loops
-	-- if RM.lastUpdate and (GetTime() - RM.lastUpdate) < 1 then return end
-	-- RM.lastUpdate = GetTime()
-
-	-- RM.isUpdatingMarkers = true
-	-- local playerSpecID = GetSpecializationID("player")
-	-- local playerMarker = GetRaidTargetIndex("player")
-
-	-- -- Define healer and tank spec IDs
-	-- local healerSpecIDs = {105, 270, 65, 256, 257, 264, 1468} -- Add all healer spec IDs here
-	-- local tankSpecIDs = {250, 104, 581, 66, 268, 73} -- Add all tank spec IDs here
-
-	-- -- Check and update the player's marker based on their specialization
-	-- if playerSpecID and tContains(healerSpecIDs, playerSpecID) and RMS.healerEnabled and playerMarker ~= 5 then
-		-- SetMarkerOnUnit("player", RMS.healerMarker) -- Healer marker
-	-- elseif playerSpecID and tContains(tankSpecIDs, playerSpecID) and RMS.tankEnabled and playerMarker ~= 1 then
-		-- SetMarkerOnUnit("player", RMS.tankMarker) -- Tank marker
-	-- elseif playerMarker and not (tContains(healerSpecIDs, playerSpecID) or tContains(tankSpecIDs, playerSpecID)) then
-		-- SetRaidTarget("player", 0) -- Clear the marker if it's not matching the spec anymore
-	-- end
-
-	-- if not RMS.healerMarked or not RMS.tankMarked then
-		-- RM.CheckAndMarkPartyMembersByRole()
-	-- end
-
-	-- -- Reset the flag after a delay
-	-- C_Timer.After(1, function() RM.isUpdatingMarkers = false end)
--- end
-
-
--------------------------------------
--- 4. Event Registration
--------------------------------------
-
--- Register event for group roster update
-RMFrame:RegisterEvent("ADDON_LOADED")
-RMFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
-RMFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-RMFrame:RegisterEvent("ENCOUNTER_START")
-RMFrame:RegisterEvent("ENCOUNTER_END")
-RMFrame:RegisterEvent("UNIT_PORTRAIT_UPDATE")
-RMFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-
-
--------------------------------------
--- 5. Event Handlers and Throttling
--------------------------------------
-
--- Flag to indicate whether an update is from the addon
-RM.addonIsUpdatingMarkers = false
-
--- Throttle system to prevent rapid updates
-local lastUpdate = 0
-local function ShouldThrottle()
-	local now = GetTime()
-	if now - lastUpdate < 0.5 then -- half a second throttle
-		return true
-	end
-	lastUpdate = now
-	return false
-end
-
-
--- Event handling function
-RMFrame:SetScript("OnEvent", function(self, event, addonName)
-
-	if event == "ADDON_LOADED" and addonName == "RhodansMarkers" then
-		RM:InitializeSettings()
-		RM:RegisterOptions()
-		RMFrame:UnregisterEvent("ADDON_LOADED")
-	end
-
-	if not RMS.enabled or (not RMS.tankEnabled and not RMS.healerEnabled) then return end
-
-	if event == "PLAYER_ENTERING_WORLD" then --or event == "ZONE_CHANGED_NEW_AREA" then
-		C_Timer.After(1, function()  -- Increased delay to ensure state accuracy
-			if ShouldClearMarkers() then
-				RM.ClearPlayerMarkers()
-			end
-		end)
-
-	elseif event == "GROUP_ROSTER_UPDATE" and IsIn5ManDungeon() then
-		-- Delayed re-marking if the group roster updates while in a dungeon
-		RM.addonIsUpdatingMarkers = true
-		RM.ClearAndApplyMarkers()
-		C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)  -- Set flag to false after markers have been re-applied
-
-	-- Triggers when Boss fight is over (win/lose) or during a PORTRAITS_UPDATED event (such as clicking the books in Azure Vault
-	elseif event == "ENCOUNTER_END" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
-	--elseif event == "ENCOUNTER_END" then 
-		-- Actions to take when exiting combat
-		if IsIn5ManDungeon() then
-			RM.addonIsUpdatingMarkers = true
-			RM.ClearAndApplyMarkers()
-			C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)
-		end
-
-	-- Triggers when Boss fight is over (win/lose) or during a PORTRAITS_UPDATED event (such as clicking the books in Azure Vault
-	elseif event == "UNIT_PORTRAIT_UPDATE" then  -- TRIGGERS WHEN A BOSS FIGHT IS OVER (WIN OR LOSE)
-		-- Actions to take when exiting combat
-		if IsIn5ManDungeon() then
-			RM.addonIsUpdatingMarkers = true
-			RM.CheckAndMarkPartyMembers()
-			C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)
-		end
-
-	-- Triggers when Boss fight is over (win/lose) or during a PORTRAITS_UPDATED event (such as clicking the books in Azure Vault
-	elseif event == "PLAYER_REGEN_ENABLED" then
-		-- Actions to take when exiting combat
-		if IsIn5ManDungeon() then
-			RM.addonIsUpdatingMarkers = true
-			RM.CheckAndMarkPartyMembers()
-			C_Timer.After(5.5, function() RM.addonIsUpdatingMarkers = false end)
-		end
-	end
+frame:RegisterEvent("ADDON_LOADED")
+frame:RegisterEvent("PLAYER_TARGET_CHANGED")
+frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+frame:RegisterEvent("PLAYER_REGEN_DISABLED")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+frame:RegisterEvent("RAID_TARGET_UPDATE")
+frame:RegisterEvent("INSPECT_READY")
+frame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
+frame:RegisterEvent("ROLE_CHANGED_INFORM")
+if major >= 5 or secureMarking then frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED") end
+if major >= 5 then frame:RegisterEvent("LFG_ROLE_UPDATE") end
+frame:SetScript("OnEvent", function(_, event, addon)
+    if event == "ADDON_LOADED" then
+        if addon ~= ADDON_NAME then return end
+        RM:InitializeSettings()
+        CreateMarkButton()
+        RM:RegisterOptions()
+        RM.UpdateButton()
+        frame:UnregisterEvent("ADDON_LOADED")
+        return
+    end
+    if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD"
+        or event == "ZONE_CHANGED_NEW_AREA" or event == "ROLE_CHANGED_INFORM"
+        or event == "PLAYER_ROLES_ASSIGNED" or event == "PLAYER_SPECIALIZATION_CHANGED"
+        or event == "LFG_ROLE_UPDATE" then
+        RM.UpdateButton()
+        ScheduleRoleRefresh()
+    else
+        RM.UpdateButton()
+    end
 end)
 
-
--------------------------------------
--- 6. Options
--------------------------------------
-
--- Create options panel
--- Create options panel
--- Create options panel
 function RM:CreateOptionsPanel()
-	local panel = CreateFrame("Frame", "RhodansMarkersOptionsPanel", UIParent)
-	panel.name = "Rhodan's Markers"
+    local panel = CreateFrame("Frame", "RhodansMarkersOptionsPanel", UIParent)
+    panel.name = "Rhodan's Markers"
+    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("Rhodan's Markers Options")
 
-	-- Title
-	local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-	title:SetPoint("TOPLEFT", 16, -16)
-	title:SetText("Rhodan's Markers Options")
+    local enabled = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    enabled:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -24)
+    enabled.Text:SetText("Enable target marking in 5-player dungeons")
+    enabled:SetChecked(RMS.enabled)
+    enabled:SetScript("OnClick", function(self)
+        RMS.enabled = self:GetChecked()
+        RM.UpdateButton()
+    end)
+    RM.enabledCheckbox = enabled
 
-	-- Enable/Disable Party Markers Checkbox
-	RM.enabledCheckbox = CreateFrame("CheckButton", "EnablePartyMarkersCheckbox", panel, "UICheckButtonTemplate")
-	RM.enabledCheckbox:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -40)
-	RM.enabledCheckbox.text = RM.enabledCheckbox:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-	RM.enabledCheckbox.text:SetPoint("LEFT", RM.enabledCheckbox, "RIGHT", 0, 0)
-	RM.enabledCheckbox.text:SetText("Enable/Disable Party Markers")
-	RM.enabledCheckbox:SetChecked(RMS.enabled)
+    local function RoleRow(label, role, anchor, offset)
+        local check = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+        check:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, offset)
+        check.Text:SetText("Enable " .. label .. " marker")
+        check:SetChecked(RMS[role .. "Enabled"])
+        check:SetScript("OnClick", function(self)
+            RMS[role .. "Enabled"] = self:GetChecked()
+            RM.UpdateButton()
+        end)
+        local dropdown = CreateFrame("Frame", nil, panel, "UIDropDownMenuTemplate")
+        dropdown:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 0, -5)
+        UIDropDownMenu_SetWidth(dropdown, 150)
+        UIDropDownMenu_Initialize(dropdown, function()
+            for icon = 1, 8 do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_" .. icon .. ":16|t " .. icon
+                info.value = icon
+                info.func = function()
+                    if icon == RMS[(role == "tank" and "healer" or "tank") .. "Marker"] then
+                        print("Tank and healer markers must differ.")
+                        return
+                    end
+                    RMS[role .. "Marker"] = icon
+                    UIDropDownMenu_SetSelectedValue(dropdown, icon)
+                    RM.UpdateButton()
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end)
+        UIDropDownMenu_SetSelectedValue(dropdown, RMS[role .. "Marker"])
+        return dropdown
+    end
+    local tank = RoleRow("Tank", "tank", enabled, -28)
+    local healer = RoleRow("Healer", "healer", tank, -38)
 
-	-- Helper label under Enable/Disable Party Markers
-	local helperLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	helperLabel:SetPoint("TOPLEFT", RM.enabledCheckbox, "BOTTOMLEFT", 0, 0)
-	helperLabel:SetText("Toggle party markers on or off, regardless of individual role marker settings below.")
-	helperLabel:SetTextColor(1, 1, 1)  -- Set text color to white (RGB: 1, 1, 1)
+    local keyLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    keyLabel:SetPoint("TOPLEFT", healer, "BOTTOMLEFT", 20, -12)
+    keyLabel:SetText("Marking keybind:")
+    local keyButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    keyButton:SetSize(180, 25)
+    keyButton:SetPoint("LEFT", keyLabel, "RIGHT", 12, 0)
+    keyButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    local listening = false
+    local function StopCapture()
+        listening = false
+        keyButton:EnableKeyboard(false)
+        if keyButton.SetPropagateKeyboardInput and not InCombatLockdown() then
+            keyButton:SetPropagateKeyboardInput(true)
+        end
+        keyButton:SetText(RMS.keybind and RMS.keybind:gsub("-", "+") or "Unbound")
+    end
+    keyButton:SetScript("OnClick", function(self, mouseButton)
+        if InCombatLockdown() then return end
+        if mouseButton == "RightButton" then
+            RMS.keybind = nil
+            StopCapture()
+            RM.UpdateButton()
+            return
+        end
+        listening = true
+        self:SetText("Press a key...")
+        if self.SetPropagateKeyboardInput then self:SetPropagateKeyboardInput(false) end
+        self:EnableKeyboard(true)
+    end)
+    keyButton:SetScript("OnKeyDown", function(_, key)
+        if not listening then return end
+        if key == "ESCAPE" then StopCapture(); return end
+        if key == "BACKSPACE" or key == "DELETE" then
+            RMS.keybind = nil
+        elseif key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL"
+            or key == "LALT" or key == "RALT" or key == "LMETA" or key == "RMETA" then
+            return
+        else
+            local chord = ""
+            if IsAltKeyDown() then chord = chord .. "ALT-" end
+            if IsControlKeyDown() then chord = chord .. "CTRL-" end
+            if IsShiftKeyDown() then chord = chord .. "SHIFT-" end
+            if IsMetaKeyDown and IsMetaKeyDown() then chord = chord .. "META-" end
+            RMS.keybind = chord .. key
+        end
+        StopCapture()
+        RM.UpdateButton()
+    end)
+    keyButton:SetScript("OnHide", StopCapture)
+    StopCapture()
 
-	-- Horizontal line
-	local horizontalLine = panel:CreateTexture(nil, "ARTWORK")
-	horizontalLine:SetColorTexture(1, 1, 1, 0.5)
-	horizontalLine:SetHeight(1)
-	horizontalLine:SetPoint("TOPLEFT", helperLabel, "BOTTOMLEFT", 0, -20)
-	horizontalLine:SetPoint("RIGHT", -16, 0)
-
-	-- Tank Marker Label
-	local tankLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-	tankLabel:SetPoint("TOPLEFT", horizontalLine, "BOTTOMLEFT", 0, -20)
-	tankLabel:SetText("Select the Tank marker:")
-
-	-- Tank Marker Dropdown
-	local tankDropdown = CreateFrame("Frame", "TankMarkerDropdown", panel, "UIDropDownMenuTemplate")
-	tankDropdown:SetPoint("TOPLEFT", tankLabel, "BOTTOMLEFT", -16, -10)
-	UIDropDownMenu_SetWidth(tankDropdown, 150)
-	UIDropDownMenu_SetText(tankDropdown, "Select Tank Marker")
-
-	-- Tank Marker Checkbox
-	RM.tankCheckbox = CreateFrame("CheckButton", "TankMarkerCheckbox", panel, "UICheckButtonTemplate")
-	RM.tankCheckbox:SetPoint("LEFT", tankDropdown, "RIGHT", 10, 0)
-	RM.tankCheckbox.text = RM.tankCheckbox:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-	RM.tankCheckbox.text:SetPoint("LEFT", RM.tankCheckbox, "RIGHT", 0, 0)
-	RM.tankCheckbox.text:SetText("Enable Tank Marker")
-	RM.tankCheckbox:SetChecked(RMS.tankEnabled)
-
-	-- Healer Marker Label
-	local healerLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-	healerLabel:SetPoint("TOPLEFT", tankDropdown, "BOTTOMLEFT", 16, -40)
-	healerLabel:SetText("Select the Healer marker:")
-
-	-- Healer Marker Dropdown
-	local healerDropdown = CreateFrame("Frame", "HealerMarkerDropdown", panel, "UIDropDownMenuTemplate")
-	healerDropdown:SetPoint("TOPLEFT", healerLabel, "BOTTOMLEFT", -16, -10)
-	UIDropDownMenu_SetWidth(healerDropdown, 150)
-	UIDropDownMenu_SetText(healerDropdown, "Select Healer Marker")
-
-	-- Healer Marker Checkbox
-	RM.healerCheckbox = CreateFrame("CheckButton", "HealerMarkerCheckbox", panel, "UICheckButtonTemplate")
-	RM.healerCheckbox:SetPoint("LEFT", healerDropdown, "RIGHT", 10, 0)
-	RM.healerCheckbox.text = RM.healerCheckbox:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-	RM.healerCheckbox.text:SetPoint("LEFT", RM.healerCheckbox, "RIGHT", 0, 0)
-	RM.healerCheckbox.text:SetText("Enable Healer Marker")
-	RM.healerCheckbox:SetChecked(RMS.healerEnabled)
-
-	-- Helper function to populate dropdown with marker options
-	local function PopulateMarkerDropdown(dropdown, role)
-		local markers = {
-			{ text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:12|t Star", value = 1 },
-			{ text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:12|t Circle", value = 2 },
-			{ text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:12|t Diamond", value = 3 },
-			{ text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:12|t Triangle", value = 4 },
-			{ text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_5:12|t Moon", value = 5 },
-			{ text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_6:12|t Square", value = 6 },
-			{ text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:12|t Cross", value = 7 },
-			{ text = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:12|t Skull", value = 8 }
-		}
-
-		local function OnClick(self)
-			UIDropDownMenu_SetSelectedID(dropdown, self:GetID())
-			if role == "healer" then
-				if self.value == RMS.tankMarker then
-					print("Healer marker cannot be the same as Tank marker.")
-					UIDropDownMenu_SetSelectedValue(healerDropdown, RMS.healerMarker)
-				else
-					RMS.healerMarker = self.value
-				end
-			elseif role == "tank" then
-				if self.value == RMS.healerMarker then
-					print("Tank marker cannot be the same as Healer marker.")
-					UIDropDownMenu_SetSelectedValue(tankDropdown, RMS.tankMarker)
-				else
-					RMS.tankMarker = self.value
-				end
-			end
-			RM.ClearAndApplyMarkers()
-		end
-
-		local function Initialize(self, level)
-			for i, marker in ipairs(markers) do
-				local info = UIDropDownMenu_CreateInfo()
-				info.text = marker.text
-				info.value = marker.value
-				info.func = OnClick
-				UIDropDownMenu_AddButton(info, level)
-			end
-		end
-
-		UIDropDownMenu_Initialize(dropdown, Initialize)
-	end
-
-	-- Populate dropdowns
-	PopulateMarkerDropdown(tankDropdown, "tank")
-	PopulateMarkerDropdown(healerDropdown, "healer")
-
-	-- Load saved values
-	UIDropDownMenu_SetSelectedValue(tankDropdown, RMS.tankMarker)
-	UIDropDownMenu_SetSelectedValue(healerDropdown, RMS.healerMarker)
-
-	-- Apply markers when checkbox states change
-	RM.tankCheckbox:SetScript("OnClick", function(self)
-		RMS.tankEnabled = self:GetChecked()
-		RM.ClearAndApplyMarkers()
-	end)
-
-	RM.healerCheckbox:SetScript("OnClick", function(self)
-		RMS.healerEnabled = self:GetChecked()
-		RM.ClearAndApplyMarkers()
-	end)
-
-	-- Apply party markers toggle when checkbox changes
-	RM.enabledCheckbox:SetScript("OnClick", function(self)
-		RMS.enabled = self:GetChecked()
-		if not RMS.enabled then
-			RM.ClearAllMarkers()
-		else
-			RM.ClearAndApplyMarkers()
-		end
-	end)
-
-	return panel
+    local hint = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    hint:SetPoint("TOPLEFT", keyLabel, "BOTTOMLEFT", 0, -16)
+    hint:SetText("Target a tank or healer and click the button by the target frame. Left-click to set a key; right-click to clear. Disabled in combat.")
+    return panel
 end
 
--- Register options panel
 function RM:RegisterOptions()
-	local panel = RM:CreateOptionsPanel()
-	local Category = Settings.RegisterCanvasLayoutCategory(panel, "Rhodan's Markers")
-	Settings.RegisterAddOnCategory(Category)
-	RM.optionsID = Category:GetID()
+    local panel = self:CreateOptionsPanel()
+    if Settings and Settings.RegisterCanvasLayoutCategory then
+        local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+        Settings.RegisterAddOnCategory(category)
+        RM.optionsID = category:GetID()
+    elseif InterfaceOptions_AddCategory then
+        InterfaceOptions_AddCategory(panel)
+    end
 end
 
-
--------------------------------------
--- 7. Slash Command Registration
--------------------------------------
-
--- Slash command registration
 SLASH_RM1 = "/rm"
-SlashCmdList["RM"] = function(msg)
-	msg = string.lower(msg)
-
-	if msg == "" then
-		-- Open the options panel
-		if Settings and Settings.OpenToCategory and RM.optionsID then
-			Settings.OpenToCategory(RM.optionsID)
-		else
-			print("Rhodan's Markers options panel not found.")
-		end
-	elseif msg == "on" then
-		RMS.enabled = true
-		RM.enabledCheckbox:SetChecked(RMS.enabled)
-		print("Rhodan's Markers enabled.")
-		RM.CheckAndMarkPlayer()
-	elseif msg == "off" then
-		RMS.enabled = false
-		RM.enabledCheckbox:SetChecked(RMS.enabled)
-		print("Rhodan's Markers disabled.")
-		RM.ClearAllMarkers()
-	else
-		print("Usage: /rm to open options panel. /rm [on | off] to toggle all markers on or off.")
-	end
+SlashCmdList.RM = function(msg)
+    msg = (msg or ""):lower()
+    if msg == "on" or msg == "off" then
+        RMS.enabled = msg == "on"
+        RM.enabledCheckbox:SetChecked(RMS.enabled)
+        RM.UpdateButton()
+    elseif Settings and Settings.OpenToCategory and RM.optionsID then
+        Settings.OpenToCategory(RM.optionsID)
+    elseif InterfaceOptionsFrame_OpenToCategory then
+        InterfaceOptionsFrame_OpenToCategory("Rhodan's Markers")
+    end
 end
