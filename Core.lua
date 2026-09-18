@@ -67,6 +67,27 @@ local function TargetPartyUnit()
     end
 end
 
+local function PartyRoleUnits()
+    local tank, healer
+    for i = 0, 4 do
+        local unit = i == 0 and "player" or "party" .. i
+        if UnitExists(unit) then
+            local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit)
+            if not (issecretvalue and issecretvalue(role)) then
+                -- Match the self-role fallback used when marking the player.
+                if role ~= "TANK" and role ~= "HEALER" and unit == "player" then
+                    local spec = TargetSpec(unit)
+                    if tankSpecs[spec] then role = "TANK" end
+                    if healerSpecs[spec] then role = "HEALER" end
+                end
+                if role == "TANK" and not tank then tank = unit end
+                if role == "HEALER" and not healer then healer = unit end
+            end
+        end
+    end
+    return tank, healer
+end
+
 local function TargetMarker()
     if not RMS.enabled or not InFivePlayerDungeon() or InCombatLockdown() then return nil end
     if not UnitExists("target") then return nil end
@@ -98,8 +119,12 @@ local function CreateMarkButton()
         button:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     end
     button:SetFrameStrata("DIALOG")
-    -- Override click bindings need both phases so the secure button receives key release.
-    button:RegisterForClicks("AnyDown", "AnyUp")
+    -- Secure override bindings need both phases so the button receives key release.
+    if secureMarking then
+        button:RegisterForClicks("AnyDown", "AnyUp")
+    else
+        button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    end
 
     local background = button:CreateTexture(nil, "BACKGROUND")
     background:SetAllPoints()
@@ -115,19 +140,26 @@ local function CreateMarkButton()
     if secureMarking then
         -- Force the up-click path even when the ActionButtonUseKeyDown CVar is enabled.
         button:SetAttribute("useOnKeyDown", false)
-        button:SetAttribute("unit", "target")
         button:SetAttribute("action", "set")
         button:SetAttribute("_onstate-combat", [[
             if newstate == "combat" then
-                self:SetAttribute("type", nil)
+                self:SetAttribute("type1", nil)
+                self:SetAttribute("type2", nil)
                 self:Hide()
             end
         ]])
         RegisterStateDriver(button, "combat", "[combat] combat; nocombat")
     else
-        button:SetScript("OnClick", function()
+        button:SetScript("OnClick", function(_, mouseButton)
             local marker = TargetMarker()
-            if marker then SetRaidTarget("target", marker) end
+            if marker then
+                SetRaidTarget("target", marker)
+            elseif RMS.enabled and InFivePlayerDungeon() and not InCombatLockdown() then
+                local tank, healer = PartyRoleUnits()
+                local unit = mouseButton == "LeftButton" and tank
+                    or mouseButton == "RightButton" and healer
+                if unit then TargetUnit(unit) end
+            end
         end)
     end
     button:Hide()
@@ -142,16 +174,29 @@ function RM.UpdateButton()
     end
     ClearOverrideBindings(bindingOwner)
     local marker, role = TargetMarker()
-    if not marker or marker < 1 or marker > 8 then
-        if secureMarking then button:SetAttribute("type", nil) end
+    local marking = marker and marker >= 1 and marker <= 8
+    local tank, healer
+    if not marking and RMS.enabled and InFivePlayerDungeon() then
+        tank, healer = PartyRoleUnits()
+        if not RMS.tankEnabled then tank = nil end
+        if not RMS.healerEnabled then healer = nil end
+    end
+    if secureMarking then
+        button:SetAttribute("type1", marking and "raidtarget" or tank and "target" or nil)
+        button:SetAttribute("type2", marking and "raidtarget" or healer and "target" or nil)
+        button:SetAttribute("unit1", marking and "target" or tank)
+        button:SetAttribute("unit2", marking and "target" or healer)
+        button:SetAttribute("marker", marking and marker or nil)
+    end
+    if marking then
+        button.label:SetText(role .. " |TInterface\\TargetingFrame\\UI-RaidTargetingIcon_" .. marker .. ":16:16|t")
+    elseif tank or healer then
+        button.label:SetText((tank and "L: Tank" or "")
+            .. (tank and healer and "  " or "") .. (healer and "R: Healer" or ""))
+    else
         button:Hide()
         return
     end
-    if secureMarking then
-        button:SetAttribute("type", "raidtarget")
-        button:SetAttribute("marker", marker)
-    end
-    button.label:SetText(role .. " |TInterface\\TargetingFrame\\UI-RaidTargetingIcon_" .. marker .. ":16:16|t")
     button:Show()
     if RMS.keybind then
         SetOverrideBindingClick(bindingOwner, true, RMS.keybind, button:GetName(), "LeftButton")
@@ -311,7 +356,9 @@ function RM:CreateOptionsPanel()
 
     local hint = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     hint:SetPoint("TOPLEFT", keyLabel, "BOTTOMLEFT", 0, -16)
-    hint:SetText("Target a tank or healer and click the button by the target frame. Left-click to set a key; right-click to clear. Disabled in combat.")
+    hint:SetWidth(400)
+    hint:SetJustifyH("LEFT")
+    hint:SetText("With no tank or healer targeted, left-click the button to target the tank or right-click to target the healer. Click again to mark. Left-click the key picker to set a binding; right-click it to clear. Disabled in combat.")
     return panel
 end
 
