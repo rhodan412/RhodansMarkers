@@ -1,0 +1,67 @@
+name: "Feature request"
+description: "Suggest an improvement to Rhodan's Markers."
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the dungeon situation you want to improve and the behavior you would like to see. A rough idea is enough.
+  - type: input
+    id: addon-version
+    attributes:
+      label: Rhodan's Markers version
+      description: "Optional, but helpful if the idea builds on current behavior."
+      placeholder: "Example: 11.2.0.0 or 12.1.0.0"
+  - type: dropdown
+    id: wow-client
+    attributes:
+      label: World of Warcraft client
+      options:
+        - "All supported clients"
+        - "Retail"
+        - "TBC Anniversary"
+        - "Classic Season of Discovery"
+        - "Classic Forever"
+        - "Not sure"
+    validations:
+      required: true
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Area of the addon
+      options:
+        - "Tank or healer detection"
+        - "Target selection button"
+        - "Raid marker behavior"
+        - "Keybinds or controls"
+        - "Settings"
+        - "Client compatibility"
+        - "Other"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would this improve?
+      description: "Describe the dungeon situation or limitation."
+      placeholder: "When I am ..., it is hard to ..."
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested behavior
+      description: "What would you like Rhodan's Markers to do?"
+      placeholder: "I would like the button to ..."
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or mockups
+      description: "Add a specific example, screenshot, or sketch if useful."
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround
+      description: "Optional: how do you handle this today?"
